@@ -37,7 +37,12 @@ function opt(sel, items, val) {
   sel.innerHTML = items.map(([v, l]) => `<option value="${esc(v)}">${esc(l)}</option>`).join('');
   if (val != null) sel.value = val;
 }
-function chart(id, cfg) { if (S.charts[id]) S.charts[id].destroy(); S.charts[id] = new Chart($(id), cfg); return S.charts[id]; }
+function chart(id, cfg) {
+  if (S.charts[id]) S.charts[id].destroy();
+  // charts inside a fixed-height box fill it instead of keeping their own aspect ratio
+  if ($(id).parentElement.classList.contains('chartbox')) cfg.options = { ...(cfg.options || {}), maintainAspectRatio: false };
+  S.charts[id] = new Chart($(id), cfg); return S.charts[id];
+}
 Chart.defaults.font.family = "'IBM Plex Sans Condensed', 'Arial Narrow', sans-serif";
 Chart.defaults.color = C.ink;
 
@@ -152,8 +157,17 @@ function drawLive(force) {
       sides().forEach(s => { const z = liveZones(acts, fr, s); drawTeamLanes(P, s, mode === 'half' ? z.entries5Pct : z.entries3Pct, mode === 'half'); });
       note = 'each team\'s lanes are named from its own direction of attack; darker = more of its final-third entries';
     }
-    if (mode === 'territory') { drawGrid(P, liveZones(acts, fr, 0).territory, { mode: 'div' }); note = 'blue squares: the home side had the ball there more; red: the away side'; }
-    if (mode === 'occupancy') sides().forEach(s => drawGrid(P, occupancyGrid(s, fr), { rgb: s === 0 ? PITCH.homeRGB : PITCH.awayRGB, labels: sides().length === 1 ? '%' : false, alpha: sides().length === 1 ? .78 : .45 }));
+    if (mode === 'territory') {
+      const [h, a] = ballTime(fr);
+      drawGrid(P, h.map((v, i) => v - a[i]), { mode: 'div', labels: i => shareLabel(h[i], a[i]) });
+      note = 'each square: % of the ball-time there held by the side that owned it (blue home, red away)';
+    }
+    if (mode === 'occupancy') {
+      if (sides().length === 1) drawGrid(P, occupancyGrid(sides()[0], fr), { rgb: sides()[0] === 0 ? PITCH.homeRGB : PITCH.awayRGB, labels: '%' });
+      else { const h = occupancyGrid(0, fr), a = occupancyGrid(1, fr);
+        drawGrid(P, h.map((v, i) => v - a[i]), { mode: 'div', labels: i => shareLabel(h[i], a[i]) });
+        note = 'each square: which side spent more player-time there, and its share'; }
+    }
     if (mode === 'heatteam') { sides().forEach(s => drawHeat(P, teamPoints(s, fr), { rgbRamp: sides().length === 2 ? (s === 0 ? 'blue' : 'red') : 'warm' })); faded = true; }
     if (mode === 'avg') { faded = true; }
     if (mode === 'passes') { sides().forEach(s => drawPassMap(P, acts, s)); faded = true; note = 'solid: completed, dashed: lost'; }
@@ -167,6 +181,57 @@ function drawLive(force) {
     if (!faded) drawBall(P, st.bx, st.by);
   }
   $('overlay-note').textContent = note;
+  if (force) renderKey();
+}
+/* ---- the numbers behind each pitch view ---- */
+function ballTime(fr) {  // seconds of ball in each square, by the side in possession
+  const h = new Array(96).fill(0), a = new Array(96).fill(0);
+  for (const f of fr) (f[4] === 0 ? h : a)[cellOf(f[2] / 10, f[3] / 10)]++;
+  return [h, a];
+}
+function shareLabel(h, a) {
+  const t = h + a; if (t < 3) return '';
+  return Math.round(100 * Math.max(h, a) / t) + '%';
+}
+function thirdsOf(side, fr, attackFrame = true) {  // % of a team's player-time in each third (own frame)
+  const c = [0, 0, 0];
+  for (let k = 0; k < fr.length; k += 2) T.meta.forEach((p, i) => { if (p.side !== side || p.role === 'GK') return;
+    const x = fr[k][5][2 * i]; if (x < 0) return; const tx = side === 0 ? x / 10 : 100 - x / 10; c[tx < 100 / 3 ? 0 : tx < 200 / 3 ? 1 : 2]++; });
+  const t = c[0] + c[1] + c[2] || 1; return c.map(v => Math.round(100 * v / t));
+}
+function shape(side, fr) {  // average depth of the back line and the team, and width, in metres
+  let back = 0, nb = 0, all = 0, na = 0, ys = [];
+  for (let k = 0; k < fr.length; k += 3) T.meta.forEach((p, i) => { if (p.side !== side || p.role === 'GK') return;
+    const x = fr[k][5][2 * i]; if (x < 0) return; const tx = side === 0 ? x / 10 : 100 - x / 10;
+    all += tx; na++; if (p.role === 'CB' || p.role === 'FB') { back += tx; nb++; } ys.push(fr[k][5][2 * i + 1] / 10); });
+  ys.sort((a, b) => a - b); const w = ys.length ? (ys[Math.floor(ys.length * .9)] - ys[Math.floor(ys.length * .1)]) * .68 : 0;
+  return { line: Math.round(back / (nb || 1) * 1.05), depth: Math.round(all / (na || 1) * 1.05), width: Math.round(w) };
+}
+function passStats(acts, side) {
+  let n = 0, ok = 0, fwd = 0, long = 0, cross = 0;
+  for (const a of acts) { if (a[2] !== side || !['pass', 'cross', 'long'].includes(a[3])) continue;
+    n++; ok += a[8]; const dx = side === 0 ? a[6] - a[4] : a[4] - a[6]; fwd += dx >= 15 && a[8] ? 1 : 0; long += a[3] === 'long'; cross += a[3] === 'cross'; }
+  return { n, pct: n ? Math.round(100 * ok / n) : 0, fwd, long, cross };
+}
+function renderKey() {
+  const box = $('ov-key'); if (!box || !T.meta) return;
+  const mode = $('overlay').value, fr = visibleFrames(), acts = visibleActs(), fx = S.live.fixture;
+  if (!fr.length || mode === 'none') { box.innerHTML = ''; return; }
+  const name = s => esc(club(s === 0 ? fx.home : fx.away).name), col = s => s === 0 ? C.blue : C.red;
+  const row = (s, cells) => `<div class="krow"><span class="kteam" style="border-color:${col(s)}">${name(s)}</span>${cells.map(([l, v]) => `<span class="kcell"><small>${l}</small><b>${v}</b></span>`).join('')}</div>`;
+  let html = '';
+  if (mode === 'thirds') html = sides().map(s => { const z = liveZones(acts, fr, s); return row(s, [['Left', z.entries3Pct[0] + '%'], ['Centre', z.entries3Pct[1] + '%'], ['Right', z.entries3Pct[2] + '%'], ['Final-third entries', z.entries], ['Ball in att. third', z.possThirdsPct[2] + '%']]); }).join('');
+  if (mode === 'half') html = sides().map(s => { const z = liveZones(acts, fr, s); return row(s, PITCH.lane5Names.map((n, i) => [n, z.entries5Pct[i] + '%'])); }).join('');
+  if (mode === 'heatteam' || mode === 'occupancy') html = sides().map(s => { const t = thirdsOf(s, fr); return row(s, [['Own third', t[0] + '%'], ['Middle third', t[1] + '%'], ['Attacking third', t[2] + '%']]); }).join('');
+  if (mode === 'avg') html = sides().map(s => { const sh = shape(s, fr); return row(s, [['Back line from own goal', sh.line + ' m'], ['Team depth', sh.depth + ' m'], ['Width', sh.width + ' m']]); }).join('');
+  if (mode === 'passes') html = sides().map(s => { const p = passStats(acts, s); return row(s, [['Passes', p.n], ['Completed', p.pct + '%'], ['Forward 15m+', p.fwd], ['Long balls', p.long], ['Crosses', p.cross]]); }).join('');
+  if (mode === 'territory') { const [h, a] = ballTime(fr), th = h.reduce((x, y) => x + y, 0), ta = a.reduce((x, y) => x + y, 0), t = th + ta || 1;
+    const att = (arr, s) => arr.reduce((acc, v, i) => acc + ((s === 0 ? (i % 12) >= 8 : (i % 12) < 4) ? v : 0), 0);
+    html = [0, 1].map(s => row(s, [['Possession (ball-time)', Math.round(100 * (s === 0 ? th : ta) / t) + '%'], ['Of that, in the attacking third', Math.round(100 * att(s === 0 ? h : a, s) / ((s === 0 ? th : ta) || 1)) + '%']])).join(''); }
+  if (mode === 'heat') { const pid = $('followp').value, i = T.meta.findIndex(p => p.id === pid);
+    if (i >= 0) { const p = T.meta[i], pts = followPoints(pid, fr), c = [0, 0, 0]; pts.forEach(([x]) => { const tx = p.side === 0 ? x : 100 - x; c[tx < 100 / 3 ? 0 : tx < 200 / 3 ? 1 : 2]++; });
+      const t = pts.length || 1; html = `<div class="krow"><span class="kteam" style="border-color:${col(p.side)}">${esc(p.name)}</span>${[['Own third', c[0]], ['Middle third', c[1]], ['Attacking third', c[2]]].map(([l, v]) => `<span class="kcell"><small>${l}</small><b>${Math.round(100 * v / t)}%</b></span>`).join('')}</div>`; } }
+  box.innerHTML = html;
 }
 function teamPoints(side, fr) {
   const pts = [];
@@ -192,6 +257,7 @@ function followPoints(pid, fr) {
 }
 function refreshZones() {
   if (!T.meta) return;
+  renderKey();
   const tab = (document.querySelector('#ltabs button.on') || {}).dataset?.tab;
   if (tab === 'zones') {
     const side = +$('z-team').value, z = liveZones(visibleActs(), visibleFrames(), side);
@@ -400,8 +466,8 @@ function renderPlayer() {
     <div><div class="kicker">Squares occupied (% of time on the pitch) · ● average position</div><canvas id="ph-grid" style="width:100%"></canvas></div></div></div>` : ''}
   <div class="grid2" style="margin-top:16px"><div class="card"><h3>Ranking factors</h3>
     <p class="small">What drives the xV rating: average contribution per match (6.0 is the baseline; the role adjustment puts every role on the same scale).</p>
-    <canvas id="factorsP" height="${40 + 22 * (p.rating_factors || []).length}"></canvas>
-    <h3 style="margin-top:12px">Rating by round</h3><canvas id="formP" height="120"></canvas></div>
+    <div class="chartbox" style="height:${60 + 24 * (p.rating_factors || []).length}px"><canvas id="factorsP"></canvas></div>
+    <h3 style="margin-top:12px">Rating by round</h3><div class="chartbox" style="height:170px"><canvas id="formP"></canvas></div></div>
   <div class="card"><h3>Every stat <span class="small">v ${roleName(p.role).toLowerCase()}s ${scope === 'all' ? 'in all four leagues' : 'in ' + esc(leagueName(p.league))} · counting stats per 90 · ★ gold = top 1%</span></h3>
     ${pctHead()}${Object.entries(cats).map(([c, ks]) => [c, ks.filter(k => avgOf(p, k, scope))]).filter(([, ks]) => ks.length)
       .map(([c, ks]) => `<div class="cat">${esc(c)}</div>${ks.map(k => pctRow(p, k, scope)).join('')}`).join('')}
@@ -699,7 +765,7 @@ function renderTeam(c) {
     <p class="sub">${t.w}-${t.d}-${t.l} · form ${t.form} · ${t.home_ppg} points per game at home, ${t.away_ppg} away</p>
     <table>${Object.entries(S.meta.team_stats).map(([k, d]) => `<tr><td>${esc(d.label)}</td><td class="n"><b>${t.values[k]}</b></td><td class="n"><span class="chip ${rankChip(t.ranks[k])}">${ord(t.ranks[k])} of ${n}</span></td></tr>`).join('')}</table>
     <h3 style="margin-top:12px">Best rated</h3>${best.map(p => `<div class="row" style="justify-content:space-between;cursor:pointer" data-id="${p.id}"><span>${esc(p.name)} <span class="small">${p.role} · ${esc(p.archetype ? p.archetype.name : '')}</span></span><b>${fmt(p.values.rating, 'rating')}</b></div>`).join('')}
-    <h3 style="margin-top:12px">Match by match</h3><canvas id="teamXg" height="150"></canvas>`;
+    <h3 style="margin-top:12px">Match by match</h3><div class="chartbox" style="height:200px"><canvas id="teamXg"></canvas></div>`;
   $('t-team').querySelectorAll('[data-id]').forEach(d => d.onclick = () => openPlayer(d.dataset.id));
   chart('teamXg', { type: 'bar', data: { labels: t.matches.map(m => `R${m.round} ${m.home ? 'v' : '@'} ${m.opp}`), datasets: [
     { label: 'xG for', data: t.matches.map(m => m.xgf), backgroundColor: C.green }, { label: 'xG against', data: t.matches.map(m => -m.xga), backgroundColor: C.red }] },

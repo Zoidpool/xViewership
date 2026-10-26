@@ -129,6 +129,15 @@ tr.click:hover { background: var(--panel); }
 .tri { display: flex; height: 16px; border: 1px solid var(--ink); }
 .tri div { font: 600 10px/16px var(--mono); text-align: center; color: var(--paper); overflow: hidden; }
 canvas { max-width: 100%; }
+.chartbox { position: relative; width: 100%; }
+/* the numbers behind the selected pitch view */
+.ovkey { border: 2px solid var(--ink); border-top: 0; background: var(--sheet); }
+.ovkey:empty { display: none; }
+.krow { display: flex; flex-wrap: wrap; align-items: stretch; border-top: 1px solid var(--line); }
+.kteam { min-width: 150px; padding: 6px 10px; font: 700 13px var(--ui); border-left: 6px solid; display: flex; align-items: center; }
+.kcell { padding: 5px 12px; border-left: 1px solid var(--line); display: flex; flex-direction: column; }
+.kcell small { font: 600 10px var(--ui); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.kcell b { font: 700 16px var(--mono); }
 #t-zones canvas { max-width: 340px; display: block; margin: 4px auto; }
 :root { --gold: #C8930E; --cyan: #0E9FB3; --orange: #D97706; }
 .pct.head { border-bottom: 1.5px solid var(--ink); font: 700 10px var(--ui); letter-spacing: .08em; text-transform: uppercase; color: var(--ink2); }

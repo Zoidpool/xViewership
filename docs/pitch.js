@@ -79,8 +79,9 @@ function drawGrid(P, vals, { mode = 'seq', labels = false, alpha = .78, rgb = PI
     const a = alpha * Math.abs(v) / max;
     ctx.fillStyle = mode === 'div' ? `rgba(${v > 0 ? PITCH.homeRGB : PITCH.awayRGB},${a})` : `rgba(${gold && v === max ? PITCH.goldRGB : rgb},${a})`;
     ctx.fillRect(x + 1, y + 1, w - 2, h - 2);
-    if (labels && Math.abs(v) >= max * .2) { ctx.fillStyle = a > .5 ? '#fff' : PITCH.ink; ctx.font = FONT(600, P.fs - 2, 'IBM Plex Mono');
-      ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(Math.round(Math.abs(v)) + (labels === '%' ? '%' : ''), x + w / 2, y + h / 2); }
+    const txt = typeof labels === 'function' ? labels(j * gx + i) : labels && Math.abs(v) >= max * .2 ? Math.round(Math.abs(v)) + (labels === '%' ? '%' : '') : '';
+    if (txt) { ctx.fillStyle = a > .5 ? '#fff' : PITCH.ink; ctx.font = FONT(600, P.fs - 2, 'IBM Plex Mono');
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(txt, x + w / 2, y + h / 2); }
   }
   ctx.textAlign = 'start'; ctx.textBaseline = 'alphabetic';
 }
@@ -122,7 +123,7 @@ function disc(P, x, y, { fill, text, ring = PITCH.paper, ringW = 1.2, r = 0, tex
 function drawPlayers(P, players, { follow = null, carrier = null, faded = false } = {}) {
   for (const p of players) {
     const home = p.side === 0, gk = p.role === 'GK';
-    P.ctx.globalAlpha = faded ? .25 : 1;
+    P.ctx.globalAlpha = faded ? .62 : 1;  // faded behind overlays, but shirt numbers stay readable
     disc(P, p.x, p.y, { fill: gk ? (home ? PITCH.homeGK : PITCH.awayGK) : (home ? PITCH.home : PITCH.away), text: p.shirt,
       textColour: gk ? PITCH.ink : PITCH.paper, ring: p.id === follow ? PITCH.gold : PITCH.paper, ringW: p.id === follow ? 3 : 1.2,
       name: !faded && (p.id === carrier || p.id === follow) ? p.name.split(' ').slice(-1)[0] : '' });
