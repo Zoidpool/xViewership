@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>xV · expected Viewership</title>
+<link rel="icon" href="assets/favicon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Serif+Text&family=IBM+Plex+Mono:wght@500;700&family=IBM+Plex+Sans+Condensed:wght@400;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="app.css?v=3">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+</head>
+<body>
+<header class="top">
+  <a class="brand" href="#live"><img src="assets/xv-mark.png" alt=""><span class="word">x<b>V</b></span></a>
+  <span class="tagline"><i>expected Viewership</i> · the game beyond the scoreline</span>
+  <span class="synthetic" title="Every league, club, player and match here is generated">Synthetic data · fictional leagues</span>
+</header>
+<nav class="tabs" id="tabs">
+  <button data-view="live" class="on">Live match</button>
+  <button data-view="players">Players</button>
+  <button data-view="compare">Compare</button>
+  <button data-view="scatter">Scatter</button>
+  <button data-view="rankings">Rankings</button>
+  <button data-view="teams">Teams</button>
+  <button data-view="leagues">Leagues &amp; probabilities</button>
+</nav>
+<main>
+  <!-- LIVE -->
+  <section class="view on" id="v-live">
+    <div class="row" style="justify-content:space-between;align-items:flex-end;margin-bottom:12px">
+      <div><div class="kicker" id="l-kicker">Live</div><h2 id="l-title">Loading…</h2>
+        <p class="sub" id="l-sub"></p></div>
+      <div class="row">
+        <label class="small">Viewer <select id="persona"></select></label>
+        <label class="small">Language <select id="lang"></select></label>
+        <label class="small">Supporting <select id="team"><option value="">Neutral</option></select></label>
+        <label class="small">Follow player <select id="followp"><option value="">Nobody</option></select></label>
+        <label class="small">Speed <select id="speed"><option>30</option><option selected>60</option><option>120</option><option>180</option><option>300</option></select>x</label>
+        <button class="primary" id="go">Kick off</button>
+      </div>
+    </div>
+    <div>
+        <div class="row small toolbar" style="margin-bottom:6px">
+          <label>Pitch view <select id="overlay">
+            <option value="none">Players only</option><option value="thirds">Thirds &amp; attacking lanes</option>
+            <option value="half">Half-spaces</option><option value="heatteam">Heatmap</option>
+            <option value="avg">Average positions</option><option value="passes">Pass map</option>
+            <option value="territory">Territory (possession by square)</option><option value="occupancy">Occupancy (by square)</option>
+            <option value="heat">Followed player heatmap</option></select></label>
+          <label>Team <select id="ov-side"><option value="2">Both</option></select></label>
+          <label>Window <select id="z-window"><option value="all">Whole match so far</option><option value="1">First half</option>
+            <option value="2">Second half</option><option value="15">Last 15 minutes</option></select></label>
+          <label><input type="checkbox" id="pop" checked> pop-up insights</label>
+          <span id="overlay-note" class="small"></span></div>
+        <div class="screen" id="screen">
+          <canvas id="pitch"></canvas>
+          <div class="bug"><div class="chipc" id="hchip"></div><div id="hname">HOM</div>
+            <div class="score" id="score">0 – 0</div><div id="aname">AWY</div><div class="chipc" id="achip"></div>
+            <div class="clock" id="clock">0'</div></div>
+          <div class="probbox"><div class="kicker">Win probability (live)</div>
+            <div class="probbar"><div id="pb-h"></div><div id="pb-d" style="background:#b8b1a2"></div><div id="pb-a"></div></div>
+            <div class="problabels"><span id="pl-h">–</span><span id="pl-d">–</span><span id="pl-a">–</span></div>
+            <div class="small" id="pb-why"></div></div>
+          <div class="pops" id="pops"></div>
+        </div>
+        <div class="ovkey" id="ov-key"></div>
+        <div class="pills" id="ltabs">
+          <button data-tab="prob" class="on">Win probability</button><button data-tab="stats">Match stats</button>
+          <button data-tab="zones">Zones</button><button data-tab="player">Followed player</button>
+          <button data-tab="log">Insights log <span class="count" id="log-n">0</span></button></div>
+        <div class="card ltab on" id="lt-prob"><div style="position:relative;height:260px"><canvas id="probChart"></canvas></div>
+          <p class="small">xV's model re-prices the result after every event: the score, minutes left, red cards, how the chances are flowing overall and in the last 10 minutes. Dashed lines: the market before kick-off (margin removed).</p></div>
+        <div class="card ltab" id="lt-stats"><div id="stats"></div></div>
+        <div class="card ltab" id="lt-zones"><div class="row small" style="margin-bottom:6px">Numbers for <select id="z-team"></select> (uses the window above)</div>
+          <div class="grid2"><div><div class="kicker">Where passes are played (6 bands, attacking →)</div><canvas id="z-bands" style="width:100%"></canvas></div>
+            <div><div class="kicker">Possession territory (blue = home, red = away)</div><canvas id="z-terr" style="width:100%"></canvas></div></div>
+          <div class="grid2" style="margin-top:10px"><div id="z-lanes"></div><div id="z-half"></div></div></div>
+        <div class="card ltab" id="lt-player"><div id="follow-empty" class="empty">Pick a player in "Follow player" above.</div>
+          <div id="follow-card" style="display:none"><h3 id="f-title"></h3><div id="f-body"></div>
+          <div class="grid2" style="margin-top:8px"><div><div class="kicker">Heatmap, this match</div><canvas id="f-heat" style="width:100%"></canvas></div>
+            <div><div class="kicker">Squares occupied, this match (% of time)</div><canvas id="f-grid" style="width:100%"></canvas></div></div></div></div>
+        <div class="card ltab" id="lt-log"><div class="kicker" style="margin-bottom:6px">Every insight so far · open "Why?" for the evidence</div>
+          <div class="feed" id="feed"><div class="empty">Pick a viewer and press Kick off.</div></div></div>
+    </div>
+  </section>
+
+  <!-- PLAYERS -->
+  <section class="view" id="v-players">
+    <div class="row" style="margin-bottom:12px">
+      <select id="p-league"></select><select id="p-club"></select><select id="p-player"></select>
+      <input type="search" id="p-search" placeholder="Search any player…" list="p-names" style="min-width:220px">
+      <datalist id="p-names"></datalist>
+      <label class="small">Compare within <select id="p-scope"><option value="league">their league</option><option value="all">all four leagues</option></select></label>
+    </div>
+    <div id="p-body"></div>
+  </section>
+
+  <!-- COMPARE -->
+  <section class="view" id="v-compare">
+    <div class="row" style="margin-bottom:10px"><b>Mode</b>
+      <select id="c-mode"><option value="players">Player v player</option><option value="teams">Team v team</option></select></div>
+    <div class="row" id="c-pickers" style="margin-bottom:12px"></div>
+    <div id="c-body"></div>
+  </section>
+
+  <!-- SCATTER -->
+  <section class="view" id="v-scatter">
+    <h2>Scatter</h2><p class="sub">Any stat against any stat. Lines mark the group average; labels go to the outliers.</p>
+    <div class="row" style="margin-bottom:10px">
+      <select id="s-entity"><option value="players">Players</option><option value="teams">Teams</option></select>
+      <select id="s-league"></select><select id="s-role"></select>
+      <label class="small">X <select id="s-x"></select></label><label class="small">Y <select id="s-y"></select></label>
+      <label class="small"><input type="checkbox" id="s-elig" checked> above the minutes bar only</label>
+    </div>
+    <div class="card"><div class="chartbox" style="height:min(68vh,620px)"><canvas id="scatterChart"></canvas></div><p class="small" id="s-note"></p></div>
+  </section>
+
+  <!-- RANKINGS -->
+  <section class="view" id="v-rankings">
+    <h2>Rankings</h2><p class="sub">Leaderboards by role. Cell colour = percentile within the role and scope; gold = top 1%. Click a column to sort.</p>
+    <div class="row" style="margin-bottom:10px">
+      <select id="r-league"></select><select id="r-role"></select><label class="small">Sort by <select id="r-stat"></select></label>
+      <label class="small">Show <select id="r-show"><option value="both">value + percentile</option><option value="value">values</option><option value="pct">percentiles</option></select></label>
+      <label class="small"><input type="checkbox" id="r-elig" checked> above the minutes bar only</label>
+    </div>
+    <div class="grid2" style="margin-bottom:12px">
+      <div class="card"><div class="row" style="justify-content:space-between"><b>Columns</b>
+        <span class="row small"><button id="r-c-role">Role default</button><button id="r-c-all">All stats</button><button id="r-c-none">Clear</button></span></div>
+        <div class="statpick" id="r-cols" style="margin-top:6px"></div></div>
+      <div class="card"><div class="row" style="justify-content:space-between"><b>Filters</b> <button id="r-f-add">+ Add filter</button></div>
+        <div id="r-filters" class="small" style="margin-top:6px"></div>
+        <p class="small" style="margin:6px 0 0">Values are per 90 for counting stats. Example: Goals from 0.3 to 1.0.</p></div>
+    </div>
+    <div class="card tablewrap" id="r-body"></div>
+  </section>
+
+  <!-- TEAMS -->
+  <section class="view" id="v-teams">
+    <div class="row" style="margin-bottom:12px"><select id="t-league"></select></div>
+    <div class="grid2"><div class="card tablewrap" id="t-table"></div><div class="card" id="t-team"></div></div>
+    <div class="card" id="t-zones" style="margin-top:16px"></div>
+    <div class="card" style="margin-top:16px"><div class="row" style="justify-content:space-between"><h3>All teams</h3>
+      <div class="row small"><label>Teams from <select id="ta-scope"></select></label>
+        <label>Colour by <select id="ta-col"><option value="scope">rank in this view</option><option value="league">rank in own league</option></select></label></div></div>
+      <p class="small" style="margin:0 0 6px">Every club side by side, across leagues if you like. Click a column to sort, a club to open it above. Gold = best in the view.</p>
+      <div class="tablewrap" id="t-all"></div></div>
+    <div class="card" style="margin-top:16px"><h3>Takeaways</h3><p class="small" style="margin:0 0 6px">Found in the season data, all four leagues.</p><div id="t-take" class="grid2"></div></div>
+  </section>
+
+  <!-- LEAGUES -->
+  <section class="view" id="v-leagues">
+    <h2>Leagues &amp; probabilities</h2>
+    <p class="sub">Five ways to read the four leagues. Probability, not betting advice.</p>
+    <nav class="lg-nav" id="lg-nav">
+      <a href="#sec-likely" class="s1">1 · Most likely</a><a href="#sec-compare" class="s2">2 · League comparison</a>
+      <a href="#sec-gaps" class="s3">3 · Results v prices</a><a href="#sec-eval" class="s4">4 · Model v market</a><a href="#sec-next" class="s5">5 · Next round</a></nav>
+    <section class="lg-sec s1" id="sec-likely"><div class="lg-head"><span class="lg-num">1</span><div><h3>Most likely to happen, by league</h3>
+      <p>For each outcome: the league where it happens most, its 90% range, and the league where it happens least. <b>Clear</b> = the ranges don't overlap; <b>lean</b> = they do.</p></div></div>
+      <div id="o-likely"></div></section>
+    <section class="lg-sec s2" id="sec-compare"><div class="lg-head"><span class="lg-num">2</span><div><h3>League comparison</h3>
+      <p>How often each outcome happened per league. Grey figures: what the market's prices implied on average.</p></div></div>
+      <div class="tablewrap" id="o-table"></div></section>
+    <section class="lg-sec s3" id="sec-gaps"><div class="lg-head"><span class="lg-num">3</span><div><h3>Where results ran away from the prices</h3>
+      <p>The biggest differences between what happened and what the market expected. ● what happened, ◆ what the prices implied.</p></div></div>
+      <div id="o-gaps"></div></section>
+    <section class="lg-sec s4" id="sec-eval"><div class="lg-head"><span class="lg-num">4</span><div><h3>Model v market</h3>
+      <p>Each round priced using only earlier rounds (walk-forward). Lower log-loss = better probabilities.</p></div></div>
+      <div id="o-eval"></div></section>
+    <section class="lg-sec s5" id="sec-next"><div class="lg-head"><span class="lg-num">5</span><div><h3>Next round: model v market</h3>
+      <p><span class="key model"></span> xV's model (team ratings from goals + xG) &nbsp; <span class="key market"></span> the market (synthetic prices, margin removed). Bars read home · draw · away.</p></div></div>
+      <div id="o-fixtures"></div></section>
+  </section>
+</main>
+<footer>xV · built for the Inside the Game hackathon on Microsoft Agent Framework and Foundry Local. All leagues, clubs, players, matches and prices are synthetic.
+Probability is shown to explain the game, not as betting advice.</footer>
+<script src="pitch.js?v=3"></script>
+<script src="app.js?v=3"></script>
+</body>
+</html>
