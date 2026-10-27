@@ -8,13 +8,15 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Serif+Text&family=IBM+Plex+Mono:wght@500;700&family=IBM+Plex+Sans+Condensed:wght@400;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="app.css?v=3">
+<link rel="stylesheet" href="app.css?v=5">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 </head>
 <body>
 <header class="top">
   <a class="brand" href="#live"><img src="assets/xv-mark.png" alt=""><span class="word">x<b>V</b></span></a>
   <span class="tagline"><i>expected Viewership</i> · the game beyond the scoreline</span>
+  <label class="cbtoggle" title="Swaps every colour pair for a palette colour-blind viewers can tell apart (Okabe-Ito)">
+    <input type="checkbox" id="cbmode"><span class="sw"></span> Colour-blind friendly</label>
   <span class="synthetic" title="Every league, club, player and match here is generated">Synthetic data · fictional leagues</span>
 </header>
 <nav class="tabs" id="tabs">
@@ -39,10 +41,19 @@
         <label class="small">Follow player <select id="followp"><option value="">Nobody</option></select></label>
         <label class="small">Speed <select id="speed"><option>30</option><option selected>60</option><option>120</option><option>180</option><option>300</option></select>x</label>
         <button class="primary" id="go">Kick off</button>
+        <button id="pause" class="pausebtn" disabled title="Space bar also pauses">❚❚ Pause</button>
       </div>
     </div>
     <div>
-        <div class="row small toolbar" style="margin-bottom:6px">
+        <div class="viewbar">
+          <div class="tiles" id="ovtiles" role="tablist" aria-label="Pitch view"></div>
+          <div class="viewopts">
+            <div class="seg" id="sidetiles" aria-label="Team"></div>
+            <div class="seg" id="wintiles" aria-label="Window"></div>
+            <label class="small"><input type="checkbox" id="pop" checked> pop-up insights</label>
+          </div>
+        </div>
+        <div class="row small toolbar" style="display:none">
           <label>Pitch view <select id="overlay">
             <option value="none">Players only</option><option value="thirds">Thirds &amp; attacking lanes</option>
             <option value="half">Half-spaces</option><option value="heatteam">Heatmap</option>
@@ -52,8 +63,8 @@
           <label>Team <select id="ov-side"><option value="2">Both</option></select></label>
           <label>Window <select id="z-window"><option value="all">Whole match so far</option><option value="1">First half</option>
             <option value="2">Second half</option><option value="15">Last 15 minutes</option></select></label>
-          <label><input type="checkbox" id="pop" checked> pop-up insights</label>
-          <span id="overlay-note" class="small"></span></div>
+        </div>
+        <div id="overlay-note" class="ovnote"></div>
         <div class="screen" id="screen">
           <canvas id="pitch"></canvas>
           <div class="bug"><div class="chipc" id="hchip"></div><div id="hname">HOM</div>
@@ -139,7 +150,9 @@
   <!-- TEAMS -->
   <section class="view" id="v-teams">
     <div class="row" style="margin-bottom:12px"><select id="t-league"></select></div>
-    <div class="grid2"><div class="card tablewrap" id="t-table"></div><div class="card" id="t-team"></div></div>
+    <div class="grid2"><div><div class="card tablewrap" id="t-table"></div>
+        <div class="card" id="t-stand"></div><div class="card" id="t-round"></div></div>
+      <div class="card" id="t-team"></div></div>
     <div class="card" id="t-zones" style="margin-top:16px"></div>
     <div class="card" style="margin-top:16px"><div class="row" style="justify-content:space-between"><h3>All teams</h3>
       <div class="row small"><label>Teams from <select id="ta-scope"></select></label>
@@ -175,7 +188,7 @@
 </main>
 <footer>xV · built for the Inside the Game hackathon on Microsoft Agent Framework and Foundry Local. All leagues, clubs, players, matches and prices are synthetic.
 Probability is shown to explain the game, not as betting advice.</footer>
-<script src="pitch.js?v=3"></script>
-<script src="app.js?v=3"></script>
+<script src="pitch.js?v=5"></script>
+<script src="app.js?v=5"></script>
 </body>
 </html>

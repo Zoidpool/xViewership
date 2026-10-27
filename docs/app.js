@@ -26,9 +26,10 @@ function fmt(v, k) {
   if (c.kind === 'avg') return (+v).toFixed(k === 'rating' ? 2 : 1);
   return (+v).toFixed(2);
 }
+const RGBN = s => s.split(',').map(Number);
 function pctColor(p) {
   if (p == null) return '#d6cfbf';
-  const t = p / 100, a = [192, 57, 43], m = [214, 207, 191], b = [46, 139, 62];
+  const t = p / 100, a = RGBN(PAL.badRGB), m = [214, 207, 191], b = RGBN(PAL.goodRGB);
   const mix = (x, y, f) => x.map((v, i) => Math.round(v + (y[i] - v) * f));
   const c = t < .5 ? mix(a, m, t * 2) : mix(m, b, (t - .5) * 2);
   return `rgb(${c})`;
@@ -53,12 +54,35 @@ async function boot() {
     ['data/meta.json', 'data/players.json', 'data/teams.json', 'data/insights.json', 'data/fixtures.json'].map(get));
   Object.assign(S, { meta, players, insights, fixtures, teams: teams.teams, tables: teams.tables, leagueZones: teams.league_zones || {} });
   players.forEach(p => S.byId[p.id] = p);
+  let cb = false; try { cb = localStorage.getItem('xv-cb') === '1'; } catch (e) { }
+  $('cbmode').checked = cb; applyPalette(cb, false);
+  $('cbmode').onchange = () => { applyPalette($('cbmode').checked, true); try { localStorage.setItem('xv-cb', $('cbmode').checked ? '1' : '0'); } catch (e) { } };
   document.querySelectorAll('#tabs button').forEach(b => b.onclick = () => show(b.dataset.view));
   window.addEventListener('hashchange', () => show(location.hash.slice(1) || 'live', true));
   initPlayers(); initCompare(); initScatter(); initRankings(); initTeams(); renderLeagues();
   await initLive();
   requestAnimationFrame(tick);
   show(location.hash.slice(1) || 'live', true);
+}
+/* colour-blind friendly palette (Okabe-Ito): home/away blue/orange, good/bad blue/vermillion, viridis heat */
+function applyPalette(cb, rerender) {
+  S.cb = cb; setPitchPalette(cb);
+  Object.assign(C, cb ? { green: '#0072B2', red: '#D55E00', blue: '#0072B2' } : { green: '#2E8B3E', red: '#C0392B', blue: '#1F4E9C' });
+  Object.assign(LEAGUE_COL, cb ? { meridian: '#0072B2', calder: '#E69F00', northmarch: '#151412', isles: '#009E73' }
+    : { meridian: '#1F4E9C', calder: '#C0392B', northmarch: '#151412', isles: '#2E8B3E' });
+  document.body.classList.toggle('cb', cb);
+  if (!rerender) return;
+  // everything drawn in JS picks the new colours up on a redraw
+  if ($('pb-h')) { $('pb-h').style.background = PITCH.home; $('pb-a').style.background = PITCH.away; }
+  const pc = S.charts.probChart;
+  if (pc) { const d = pc.data.datasets; d[0].borderColor = PITCH.home; d[0].backgroundColor = PITCH.home + '22'; d[2].borderColor = PITCH.away;
+    d[2].backgroundColor = PITCH.away + '22'; d[3].borderColor = PITCH.home; d[4].borderColor = PITCH.away; pc.update('none'); }
+  if (S.lastSnap) renderStats(S.lastSnap, true);
+  T.numKey = null; drawLive(true); refreshZones();
+  renderLeagues(); renderRankings(); renderAllTeams(); renderTakeaways(); renderTable();
+  if (S.curTeam) renderTeam(S.curTeam);
+  if ($('p-player').value) renderPlayer();
+  renderCompare(); renderScatter();
 }
 function show(view, fromHash) {
   if (!$('v-' + view)) view = 'live';
@@ -91,15 +115,21 @@ async function initLive() {
   $('l-sub').textContent = `${ord(H.position)} v ${ord(A.position)} in the table · before kick-off xV's model gives ${pp(fx.model.home)} / ${pp(fx.model.draw)} / ${pp(fx.model.away)}, the market ${pp(fx.market.home)} / ${pp(fx.market.draw)} / ${pp(fx.market.away)}`;
   $('hname').textContent = fx.home; $('aname').textContent = fx.away;
   $('hchip').style.background = H.colour; $('achip').style.background = A.colour;
-  $('pb-h').style.background = C.blue; $('pb-a').style.background = C.red;
+  $('pb-h').style.background = PITCH.home; $('pb-a').style.background = PITCH.away;
   setProbs({ home: fx.model.home, draw: fx.model.draw, away: fx.model.away, why: ['pre-match'] });
   renderStats(null); probChart();
   $('go').onclick = kickOff;
   $('followp').onchange = () => { renderFollow(S.lastSnap); refreshZones(); drawLive(true); };
   opt($('z-team'), [['0', H.name], ['1', A.name]]);
   opt($('ov-side'), [['2', 'Both teams'], ['0', H.name], ['1', A.name]], '2');
-  ['z-team', 'z-window', 'ov-side'].forEach(i => $(i).onchange = () => { refreshZones(); drawLive(true); });
-  $('overlay').onchange = () => drawLive(true);
+  ['z-team', 'z-window', 'ov-side'].forEach(i => $(i).onchange = () => { refreshZones(); drawLive(true); syncTiles(); });
+  $('overlay').onchange = () => { T.fade = performance.now(); drawLive(true); syncTiles(); };
+  buildTiles(H, A);
+  $('pause').onclick = () => setPaused(!T.paused);
+  $('speed').onchange = () => { if (S.replay && T.playing) { T.base = T.now; T.t0 = performance.now(); } T.speed = +$('speed').value; };
+  document.addEventListener('keydown', e => {
+    if (e.code === 'Space' && $('v-live').classList.contains('on') && !['INPUT', 'SELECT', 'TEXTAREA', 'BUTTON'].includes(e.target.tagName) && !$('pause').disabled) {
+      e.preventDefault(); setPaused(!T.paused); } });
   document.querySelectorAll('#ltabs button').forEach(b => b.onclick = () => {
     document.querySelectorAll('#ltabs button').forEach(x => x.classList.toggle('on', x === b));
     document.querySelectorAll('.ltab').forEach(x => x.classList.toggle('on', x.id === 'lt-' + b.dataset.tab));
@@ -150,6 +180,8 @@ function drawLive(force) {
   const P = pitchCanvas(cv); if (!P) return; drawPitch(P);
   const mode = $('overlay').value, followId = $('followp').value, st = T.meta ? positionsAt(T.now) : null;
   let note = '', faded = false;
+  const fadeA = Math.min(1, (performance.now() - (T.fade || 0)) / 380);  // overlays ease in when you switch view
+  P.ctx.globalAlpha = fadeA;
   if (T.meta && mode !== 'none') {
     const fr = visibleFrames(), acts = visibleActs();
     if (mode === 'thirds' || mode === 'half') {
@@ -173,6 +205,7 @@ function drawLive(force) {
     if (mode === 'passes') { sides().forEach(s => drawPassMap(P, acts, s)); faded = true; note = 'solid: completed, dashed: lost'; }
     if (mode === 'heat') { if (followId) drawHeat(P, followPoints(followId, fr)); else note = 'pick a player to follow'; faded = !!followId; }
   }
+  P.ctx.globalAlpha = 1;
   if (st) {
     let carrier = null, best = 4;
     st.players.forEach(p => { const d = Math.hypot(p.x - st.bx, p.y - st.by); if (d < best) { best = d; carrier = p.id; } });
@@ -180,9 +213,70 @@ function drawLive(force) {
     if (mode === 'avg') drawAvg(P, visibleFrames());
     if (!faded) drawBall(P, st.bx, st.by);
   }
+  if (T.meta && mode !== 'none' && visibleFrames().length) { P.ctx.globalAlpha = fadeA; pitchNumbers(P, mode, followId); P.ctx.globalAlpha = 1; }
   $('overlay-note').textContent = note;
   if (force) renderKey();
 }
+/* ---- pitch view picker: icon tiles, team and window toggles ---- */
+const ICON = {  // 40x26 pictograms, drawn in currentColor
+  none: '<rect x="1" y="1" width="38" height="24" rx="2"/><line x1="20" y1="1" x2="20" y2="25"/><circle cx="11" cy="9" r="2.2" class="f"/><circle cx="13" cy="17" r="2.2" class="f"/><circle cx="27" cy="12" r="2.2" class="f"/><circle cx="31" cy="19" r="2.2" class="f"/>',
+  thirds: '<rect x="1" y="1" width="38" height="24" rx="2"/><line x1="13.7" y1="1" x2="13.7" y2="25" class="d"/><line x1="26.3" y1="1" x2="26.3" y2="25" class="d"/><line x1="1" y1="9" x2="39" y2="9" class="d"/><line x1="1" y1="17" x2="39" y2="17" class="d"/><path d="M29 13h7m-2.5-2.5L36 13l-2.5 2.5"/>',
+  half: '<rect x="1" y="1" width="38" height="24" rx="2"/><rect x="1" y="6" width="38" height="4" class="f2"/><rect x="1" y="16" width="38" height="4" class="f2"/>',
+  heatteam: '<rect x="1" y="1" width="38" height="24" rx="2"/><ellipse cx="14" cy="13" rx="7" ry="5" class="f2"/><ellipse cx="14" cy="13" rx="3" ry="2.2" class="f"/><ellipse cx="28" cy="10" rx="5" ry="4" class="f2"/>',
+  avg: '<rect x="1" y="1" width="38" height="24" rx="2"/><circle cx="8" cy="13" r="2.4"/><circle cx="14" cy="7" r="2.4"/><circle cx="14" cy="19" r="2.4"/><circle cx="22" cy="13" r="2.4"/><circle cx="30" cy="9" r="2.4"/><circle cx="30" cy="17" r="2.4"/>',
+  passes: '<rect x="1" y="1" width="38" height="24" rx="2"/><path d="M6 19l10-8m0 0l-1 3.5m1-3.5l-3.6.2"/><path d="M17 9l12 5m0 0l-3.4 1.2m3.4-1.2l-2.2-2.8"/><path d="M8 7l7 2" class="d"/>',
+  territory: '<rect x="1" y="1" width="38" height="24" rx="2"/><rect x="1" y="1" width="9.5" height="12" class="f2"/><rect x="10.5" y="13" width="9.5" height="12" class="f2"/><rect x="20" y="1" width="9.5" height="12" class="f"/><rect x="29.5" y="13" width="9.5" height="12" class="f"/>',
+  occupancy: '<rect x="1" y="1" width="38" height="24" rx="2"/><path d="M10.5 1v24M20 1v24M29.5 1v24M1 13h38" class="d"/><rect x="10.5" y="13" width="9.5" height="12" class="f"/><rect x="20" y="1" width="9.5" height="12" class="f2"/>',
+  heat: '<rect x="1" y="1" width="38" height="24" rx="2"/><ellipse cx="24" cy="15" rx="8" ry="5" class="f2"/><circle cx="24" cy="15" r="2.6" class="f"/><circle cx="24" cy="15" r="4.4"/>',
+};
+const OV_LABEL = { none: 'Players', thirds: 'Thirds & lanes', half: 'Half-spaces', heatteam: 'Heatmap', avg: 'Average positions',
+  passes: 'Pass map', territory: 'Territory', occupancy: 'Occupancy', heat: 'Player heatmap' };
+function buildTiles(H, A) {
+  $('ovtiles').innerHTML = Object.keys(OV_LABEL).map(m => `<button class="tile" role="tab" data-m="${m}" title="${esc(OV_LABEL[m])}">
+    <svg viewBox="0 0 40 26" aria-hidden="true">${ICON[m]}</svg><span>${esc(OV_LABEL[m])}</span></button>`).join('');
+  $('ovtiles').querySelectorAll('.tile').forEach(b => b.onclick = () => { $('overlay').value = b.dataset.m; $('overlay').onchange(); });
+  $('sidetiles').innerHTML = [['0', H.code || S.live.fixture.home, 'home'], ['2', 'Both', 'both'], ['1', A.code || S.live.fixture.away, 'away']]
+    .map(([v, l, k]) => `<button data-v="${v}" class="sb-${k}">${esc(l)}</button>`).join('');
+  $('sidetiles').querySelectorAll('button').forEach(b => b.onclick = () => { $('ov-side').value = b.dataset.v; $('ov-side').onchange(); });
+  $('wintiles').innerHTML = [['all', 'Match'], ['1', '1st half'], ['2', '2nd half'], ['15', 'Last 15′']]
+    .map(([v, l]) => `<button data-v="${v}">${l}</button>`).join('');
+  $('wintiles').querySelectorAll('button').forEach(b => b.onclick = () => { $('z-window').value = b.dataset.v; $('z-window').onchange(); });
+  syncTiles();
+}
+function syncTiles() {
+  const m = $('overlay').value;
+  $('ovtiles').querySelectorAll('.tile').forEach(b => { b.classList.toggle('on', b.dataset.m === m); b.setAttribute('aria-selected', b.dataset.m === m); });
+  $('sidetiles').querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.v === $('ov-side').value));
+  $('wintiles').querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.v === $('z-window').value));
+  const sideless = ['none', 'territory', 'heat'].includes(m);
+  $('sidetiles').classList.toggle('dim', sideless); $('wintiles').classList.toggle('dim', m === 'none');
+}
+
+/* ---- numbers drawn on the pitch, per view (the strip below has the full set) ---- */
+const absX = (side, tx) => side === 0 ? tx : 100 - tx;  // team frame -> pitch x (home attacks right)
+function pitchNumbers(P, mode, followId) {
+  // the figures are recomputed at most every 0.7 s (or when the view changes); drawing them is cheap
+  const key = [mode, $('ov-side').value, $('z-window').value, followId, S.cb ? 1 : 0].join('|');
+  if (key !== T.numKey || performance.now() - (T.numT || 0) > 700) { T.numKey = key; T.numT = performance.now(); T.numOps = numberOps(mode, followId); }
+  for (const op of T.numOps || []) op[0] === 'b' ? badge(P, ...op.slice(1)) : vline(P, ...op.slice(1));
+}
+function numberOps(mode, followId) {
+  const fr = visibleFrames(), acts = visibleActs(), rgb = s => s === 0 ? PITCH.homeRGB : PITCH.awayRGB, ops = [];
+  const thirdBadges = (s, t) => [0, 1, 2].forEach(k => ops.push(['b', absX(s, (k + .5) * 100 / 3), s === 0 ? 93 : 7, `${t[k]}%`, rgb(s)]));
+  if (mode === 'heatteam' || (mode === 'occupancy' && sides().length === 1)) sides().forEach(s => thirdBadges(s, thirdsOf(s, fr)));
+  if (mode === 'avg') sides().forEach(s => { const sh = shape(s, fr), x = absX(s, sh.line / 1.05), d = absX(s, sh.depth / 1.05);
+    ops.push(['v', x, rgb(s), [6, 4]], ['b', x, s === 0 ? 94 : 6, `back line ${sh.line} m`, rgb(s)],
+      ['v', d, rgb(s), [2, 5]], ['b', d, s === 0 ? 86 : 14, `team ${sh.depth} m · width ${sh.width} m`, rgb(s)]); });
+  if (mode === 'passes') sides().forEach(s => { const p = passStats(acts, s);
+    ops.push(['b', s === 0 ? 22 : 78, s === 0 ? 93 : 7, `${p.n} passes · ${p.pct}% · ${p.fwd} forward · ${p.cross} crosses`, rgb(s)]); });
+  if (mode === 'territory') { const [h, a] = ballTime(fr), th = h.reduce((x, y) => x + y, 0), ta = a.reduce((x, y) => x + y, 0), t = th + ta || 1;
+    ops.push(['b', 22, 93, `possession ${Math.round(100 * th / t)}%`, rgb(0)], ['b', 78, 7, `possession ${Math.round(100 * ta / t)}%`, rgb(1)]); }
+  if (mode === 'heat' && followId) { const i = T.meta.findIndex(p => p.id === followId); if (i >= 0) { const s = T.meta[i].side, c = [0, 0, 0], pts = followPoints(followId, fr);
+    pts.forEach(([x]) => { const tx = s === 0 ? x : 100 - x; c[tx < 100 / 3 ? 0 : tx < 200 / 3 ? 1 : 2]++; });
+    thirdBadges(s, c.map(v => Math.round(100 * v / (pts.length || 1)))); } }
+  return ops;
+}
+
 /* ---- the numbers behind each pitch view ---- */
 function ballTime(fr) {  // seconds of ball in each square, by the side in possession
   const h = new Array(96).fill(0), a = new Array(96).fill(0);
@@ -217,7 +311,7 @@ function renderKey() {
   const box = $('ov-key'); if (!box || !T.meta) return;
   const mode = $('overlay').value, fr = visibleFrames(), acts = visibleActs(), fx = S.live.fixture;
   if (!fr.length || mode === 'none') { box.innerHTML = ''; return; }
-  const name = s => esc(club(s === 0 ? fx.home : fx.away).name), col = s => s === 0 ? C.blue : C.red;
+  const name = s => esc(club(s === 0 ? fx.home : fx.away).name), col = s => s === 0 ? PITCH.home : PITCH.away;
   const row = (s, cells) => `<div class="krow"><span class="kteam" style="border-color:${col(s)}">${name(s)}</span>${cells.map(([l, v]) => `<span class="kcell"><small>${l}</small><b>${v}</b></span>`).join('')}</div>`;
   let html = '';
   if (mode === 'thirds') html = sides().map(s => { const z = liveZones(acts, fr, s); return row(s, [['Left', z.entries3Pct[0] + '%'], ['Centre', z.entries3Pct[1] + '%'], ['Right', z.entries3Pct[2] + '%'], ['Final-third entries', z.entries], ['Ball in att. third', z.possThirdsPct[2] + '%']]); }).join('');
@@ -280,9 +374,10 @@ function barRows(names, pct, rgb = 'var(--green)') {
   return names.map((n, i) => `<div class="archbar"><span>${esc(n)}</span><div class="track"><div class="fill" style="width:${100 * pct[i] / mx}%;background:${pct[i] === mx ? 'var(--gold)' : rgb}"></div></div><span class="num">${pct[i]}%</span></div>`).join('');
 }
 function tick() {
-  if (T.playing && S.replay) {  // replay: the clock reveals frames up to now
-    T.now = (performance.now() - T.t0) / 1000 * T.speed;
-    if (T.now > T.at[T.at.length - 1]) T.playing = false;
+  if (T.playing && S.replay && !T.paused) {  // replay: the clock reveals frames and events up to now
+    T.now = T.base + (performance.now() - T.t0) / 1000 * T.speed;
+    replayStep();
+    if (T.now > T.at[T.at.length - 1] + 5) { T.playing = false; $('pause').disabled = true; }
   }
   drawLive();
   if (performance.now() - T.lastZones > 1000) { T.lastZones = performance.now(); refreshZones(); }
@@ -301,10 +396,10 @@ function probChart() {
   const flat = (v, col) => ({ label: '', data: [{ x: 0, y: 100 * v }, { x: 95, y: 100 * v }], borderColor: col, borderDash: [4, 4], borderWidth: 1, pointRadius: 0, fill: false });
   chart('probChart', {
     type: 'line', data: { datasets: [
-      { label: club(fx.home).name, data: [], borderColor: C.blue, backgroundColor: C.blue + '22', fill: 'origin', borderWidth: 2.2, pointRadius: 0, tension: .2 },
+      { label: club(fx.home).name, data: [], borderColor: PITCH.home, backgroundColor: PITCH.home + '22', fill: 'origin', borderWidth: 2.2, pointRadius: 0, tension: .2 },
       { label: 'Draw', data: [], borderColor: '#8d8676', borderWidth: 1.6, pointRadius: 0, tension: .2 },
-      { label: club(fx.away).name, data: [], borderColor: C.red, backgroundColor: C.red + '22', fill: 'origin', borderWidth: 2.2, pointRadius: 0, tension: .2 },
-      flat(fx.market.home, C.blue), flat(fx.market.away, C.red)] },
+      { label: club(fx.away).name, data: [], borderColor: PITCH.away, backgroundColor: PITCH.away + '22', fill: 'origin', borderWidth: 2.2, pointRadius: 0, tension: .2 },
+      flat(fx.market.home, PITCH.home), flat(fx.market.away, PITCH.away)] },
     options: { animation: false, parsing: false, maintainAspectRatio: false, scales: { x: { type: 'linear', min: 0, max: 95, title: { display: true, text: 'minute' } },
       y: { min: 0, max: 100, ticks: { callback: v => v + '%' } } },
       plugins: { legend: { labels: { filter: i => i.text } } } } });
@@ -323,7 +418,7 @@ function renderStats(s) {
   $('stats').innerHTML = `<div class="grid2">${[LIVE_ROWS.slice(0, 8), LIVE_ROWS.slice(8)].map(rows => `<div>${rows.map(([k, l]) => {
     const hv = +(h[k] ?? 0), av = +(a[k] ?? 0), t = hv + av || 1;
     return `<div class="statrow"><div class="v">${hv}</div><div class="mid">${l}<div class="bar2">
-      <div style="width:${100 * hv / t}%;background:${C.blue}"></div><div style="width:${100 * av / t}%;background:${C.red}"></div></div></div>
+      <div style="width:${100 * hv / t}%;background:${PITCH.home}"></div><div style="width:${100 * av / t}%;background:${PITCH.away}"></div></div></div>
       <div class="v r">${av}</div></div>`; }).join('')}</div>`).join('')}</div>`;
   if (!s) return;
   S.lastSnap = s;
@@ -370,14 +465,14 @@ function popInsight(ins, mentions) {  // appears when it happens, then fades out
   const life = 3500 + 4500 * ins.importance;
   setTimeout(() => el.classList.add('out'), life); setTimeout(() => el.remove(), life + 700);
 }
-let timers = [], es = null;
+let es = null;
 function kickOff() {
-  timers.forEach(clearTimeout); timers = []; if (es) es.close();
+  if (es) es.close();
   $('feed').innerHTML = '<div class="empty">Kick-off…</div>'; $('log-n').textContent = '0'; $('pops').innerHTML = '';
   probChart(); renderStats(null);
   const persona = $('persona').value, lang = $('lang').value, fav = $('team').value, speed = +$('speed').value;
   T.speed = speed;
-  if (S.replay) { T.now = 0; T.t0 = performance.now(); T.playing = true; }
+  if (S.replay) { T.now = 0; T.base = 0; T.t0 = performance.now(); T.playing = true; }
   if (!S.replay) {
     const q = new URLSearchParams({ persona, lang, team: fav, speed });
     T.frames = []; T.at = []; T.acts = []; T.now = 0;
@@ -391,16 +486,26 @@ function kickOff() {
     es.addEventListener('done', () => { es.close(); $('clock').textContent = 'FT'; });
     return;
   }
-  const minImp = S.live.persona_min[persona], tl = S.replay.timeline;
-  for (const item of tl) {
-    timers.push(setTimeout(() => {
-      if (item.type === 'stats') return renderStats(item.data);
-      const ins = item.data, bump = fav && ins.team === fav ? 0.15 : 0;
-      if (ins.importance + bump < minImp - 1e-9) return;
-      const line = item.lines[`${persona}|${lang}|${fav}`] || item.lines[`${persona}|${lang}|`] || item.lines[`${persona}|en|`];
-      if (line) addCard({ ...ins, line });
-    }, item.at * 1000 / speed));
+  // replay: one clock (T.now) drives everything, so it can pause, resume and change speed mid-match
+  RP = { i: 0, persona, lang, fav, minImp: S.live.persona_min[persona] };
+  setPaused(false);
+}
+let RP = null;
+function replayStep() {  // fire every timeline item the clock has reached
+  const tl = S.replay.timeline;
+  while (RP && RP.i < tl.length && tl[RP.i].at <= T.now) {
+    const item = tl[RP.i++];
+    if (item.type === 'stats') { renderStats(item.data); continue; }
+    const ins = item.data, bump = RP.fav && ins.team === RP.fav ? 0.15 : 0;
+    if (ins.importance + bump < RP.minImp - 1e-9) continue;
+    const line = item.lines[`${RP.persona}|${RP.lang}|${RP.fav}`] || item.lines[`${RP.persona}|${RP.lang}|`] || item.lines[`${RP.persona}|en|`];
+    if (line) addCard({ ...ins, line });
   }
+}
+function setPaused(p) {
+  T.paused = p; T.base = T.now; T.t0 = performance.now();
+  const b = $('pause'); b.disabled = !S.replay || !RP; b.textContent = p ? '▶ Resume' : '❚❚ Pause';
+  b.classList.toggle('on', p); $('screen').classList.toggle('paused', p);
 }
 
 /* ---------------- shared: percentile row ---------------- */
@@ -675,7 +780,7 @@ function renderRankings() {
   $('r-body').querySelectorAll('tr.click').forEach(tr => tr.onclick = () => openPlayer(tr.dataset.id));
 }
 function pctTint(p) {  // stronger, print-friendly heat for table cells
-  const t = p / 100, lo = [192, 57, 43], mid = [248, 245, 238], hi = [46, 139, 62];
+  const t = p / 100, lo = RGBN(PAL.badRGB), mid = [248, 245, 238], hi = RGBN(PAL.goodRGB);
   const mix = (a, b, f) => a.map((v, i) => Math.round(v + (b[i] - v) * f));
   const c = t < .5 ? mix(lo, mid, t * 2) : mix(mid, hi, (t - .5) * 2), a = .15 + .55 * Math.abs(t - .5) * 2;
   return `rgba(${c},${a.toFixed(2)})`;
@@ -684,14 +789,54 @@ function pctTint(p) {  // stronger, print-friendly heat for table cells
 /* ---------------- TEAMS ---------------- */
 function initTeams() {
   opt($('t-league'), S.meta.leagues.map(l => [l.id, l.name]));
-  $('t-league').onchange = () => { renderTable(); renderTeam(S.tables[$('t-league').value][0]); };
+  $('t-league').onchange = () => { renderTable(); renderStandouts(); renderLastRound(); renderTeam(S.tables[$('t-league').value][0]); };
   $('t-league').onchange();
   opt($('ta-scope'), [['all', 'All four leagues'], ...S.meta.leagues.map(l => [l.id, l.name])], 'all');
   ['ta-scope', 'ta-col'].forEach(i => $(i).onchange = renderAllTeams);
   renderAllTeams(); renderTakeaways();
 }
+/* standout players of the league: best rated per line, top scorer, top creator */
+function renderStandouts() {
+  const lg = $('t-league').value, ps = S.players.filter(p => p.league === lg && p.eligible);
+  const best = roles => ps.filter(p => roles.includes(p.role)).sort((a, b) => b.values.rating - a.values.rating)[0];
+  const top = k => ps.slice().sort((a, b) => (b.totals[k] || 0) - (a.totals[k] || 0))[0];
+  const rows = [['Goalkeeper', best(['GK']), p => `${fmt(p.values.rating, 'rating')} rating`],
+    ['Defence', best(['CB', 'FB']), p => `${fmt(p.values.rating, 'rating')} rating`],
+    ['Midfield', best(['DM', 'CM', 'AM']), p => `${fmt(p.values.rating, 'rating')} rating`],
+    ['Attack', best(['W', 'ST']), p => `${fmt(p.values.rating, 'rating')} rating`],
+    ['Top scorer', top('goals'), p => `${Math.round(p.totals.goals)} goals`],
+    ['Top creator', top('xa'), p => `${(+p.totals.xa).toFixed(1)} xA · ${Math.round(p.totals.assists)} assists`]];
+  $('t-stand').innerHTML = `<h3>Standout players <span class="small">${esc(leagueName(lg))} · above the minutes bar</span></h3>
+    ${rows.filter(r => r[1]).map(([lab, p, val]) => `<div class="stand" data-id="${p.id}"><span class="slab">${lab}</span>
+      <span class="sname"><span class="clubdot" style="background:${club(p.club).colour}"></span><b>${esc(p.name)}</b>
+        <small>${esc(club(p.club).name)} · ${p.role}${p.archetype ? ' · ' + esc(p.archetype.name) : ''}</small></span>
+      <span class="sval">${val(p)}</span></div>`).join('')}`;
+  $('t-stand').querySelectorAll('[data-id]').forEach(d => d.onclick = () => openPlayer(d.dataset.id));
+}
+/* the last round played: results with xG, and three takeaways */
+function renderLastRound() {
+  const lg = $('t-league').value, codes = S.tables[lg];
+  const R = Math.max(...codes.flatMap(c => club(c).matches.map(m => m.round)));
+  const games = codes.flatMap(c => club(c).matches.filter(m => m.round === R && m.home).map(m => ({ h: c, a: m.opp, ...m })));
+  const pos = c => club(c).position;
+  // biggest upset: the winner sits furthest below the loser in the table
+  const upsets = games.filter(g => g.gf !== g.ga).map(g => { const w = g.gf > g.ga ? g.h : g.a, l = w === g.h ? g.a : g.h; return { g, w, l, gap: pos(w) - pos(l) }; })
+    .filter(u => u.gap > 0).sort((a, b) => b.gap - a.gap);
+  // against the chances: the winner had the lower xG, by the widest margin
+  const robbed = games.filter(g => g.gf !== g.ga).map(g => ({ g, diff: g.gf > g.ga ? g.xga - g.xgf : g.xgf - g.xga })).filter(x => x.diff > 0).sort((a, b) => b.diff - a.diff)[0];
+  const perf = S.players.filter(p => p.league === lg).flatMap(p => p.ratings.filter(r => r.round === R).map(r => ({ p, r: r.rating }))).sort((a, b) => b.r - a.r)[0];
+  const score = g => `${esc(club(g.h).name)} <b>${g.gf}–${g.ga}</b> ${esc(club(g.a).name)}`;
+  const notes = [];
+  if (upsets[0]) { const u = upsets[0]; notes.push(['gold', 'Upset', `${esc(club(u.w).name)} (${ord(pos(u.w))}) beat ${esc(club(u.l).name)} (${ord(pos(u.l))})`]); }
+  if (robbed) notes.push(['orange', 'Against the chances', `${score(robbed.g)}, despite xG ${robbed.g.xgf.toFixed(2)}–${robbed.g.xga.toFixed(2)}`]);
+  if (perf) notes.push(['cyan', 'Player of the round', `${esc(perf.p.name)} (${esc(club(perf.p.club).name)}, ${perf.p.role}), rated ${perf.r.toFixed(2)}`]);
+  $('t-round').innerHTML = `<h3>Round ${R} <span class="small">last round played · ${esc(leagueName(lg))}</span></h3>
+    ${games.map(g => `<div class="rres"><span class="rh">${esc(club(g.h).name)}</span><span class="rs">${g.gf} – ${g.ga}</span><span class="ra">${esc(club(g.a).name)}</span>
+      <span class="rx">xG ${g.xgf.toFixed(2)}–${g.xga.toFixed(2)}</span></div>`).join('')}
+    <div style="margin-top:10px">${notes.map(([tone, t, txt]) => `<div class="obs"><span class="chip ${tone} tag">${t}</span>${txt}</div>`).join('')}</div>`;
+}
 function openTeam(c) {
-  const t = club(c); $('t-league').value = t.league; renderTable(); renderTeam(c);
+  const t = club(c); $('t-league').value = t.league; renderTable(); renderStandouts(); renderLastRound(); renderTeam(c);
   $('t-team').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
@@ -787,8 +932,8 @@ function drawTeamZones(t, z, lz) {
   const B = pitchCanvas($('tz-bands'), true); if (B) { drawPitch(B, { arrow: true }); drawBands(B, z.pass_bands_pct.map(v => Math.round(v * 10) / 10), lz && lz.pass_bands_pct); }
   const L = pitchCanvas($('tz-lanes'), true); if (L) { drawPitch(L, { arrow: true }); drawThirds(L); drawLaneColumns(L, z.entries5_pct, true, PITCH.cyanRGB); }
   const R = pitchCanvas($('tz-terr'), true); if (R) { drawPitch(R, { arrow: true }); drawGrid(R, z.territory_pct, { rgb: PITCH.homeRGB, gold: true }); }
-  const A = pitchCanvas($('tz-af'), true); if (A) { drawPitch(A, { arrow: true }); drawAssistZones(A, S.meta.assist_zones, z.assist_areas, '46,139,62'); }
-  const D = pitchCanvas($('tz-ac'), true); if (D) { drawPitch(D, { arrow: true }); drawAssistZones(D, S.meta.assist_zones, z.conceded_assist_areas, PITCH.awayRGB); }
+  const A = pitchCanvas($('tz-af'), true); if (A) { drawPitch(A, { arrow: true }); drawAssistZones(A, S.meta.assist_zones, z.assist_areas, PAL.goodRGB); }
+  const D = pitchCanvas($('tz-ac'), true); if (D) { drawPitch(D, { arrow: true }); drawAssistZones(D, S.meta.assist_zones, z.conceded_assist_areas, PAL.badRGB); }
 }
 function assistTypes(v) {
   const names = ['Short pass', 'Cross', 'Long ball', 'Corner', 'Free kick', 'Penalty', 'Individual'], mx = Math.max(...v);

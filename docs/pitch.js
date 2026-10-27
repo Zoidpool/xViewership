@@ -12,6 +12,15 @@ const PITCH = {
   gx: 12, gy: 8,
 };
 const FONT = (w, px, fam = 'IBM Plex Sans Condensed') => `${w} ${px}px '${fam}'`;
+/* palette switch: default print colours, or Okabe-Ito colours colour-blind viewers can tell apart */
+const PAL = { cb: false, goodRGB: '46,139,62', badRGB: '192,57,43' };
+function setPitchPalette(cb) {
+  PAL.cb = cb;
+  Object.assign(PITCH, cb
+    ? { home: '#0072B2', away: '#E69F00', homeGK: '#8cc3e6', awayGK: '#f3cf7f', homeRGB: '0,114,178', awayRGB: '230,159,0' }
+    : { home: '#1F4E9C', away: '#C0392B', homeGK: '#7aa0d8', awayGK: '#e6a39b', homeRGB: '31,78,156', awayRGB: '192,57,43' });
+  Object.assign(PAL, cb ? { goodRGB: '0,114,178', badRGB: '213,94,0' } : { goodRGB: '46,139,62', badRGB: '192,57,43' });
+}
 
 /* returns null while the canvas is hidden (drawing then would be blurry); callers redraw on show */
 function pitchCanvas(canvas, vertical = false) {
@@ -51,6 +60,20 @@ function label(P, text, x, y, { colour = PITCH.ink, size = 0, weight = 700, alig
   ctx.fillStyle = colour; ctx.fillText(text, sx, sy); ctx.textAlign = 'start'; ctx.textBaseline = 'alphabetic';
 }
 
+/* a filled number badge in a team colour (rgb "r,g,b"), centred on pitch coordinates */
+function badge(P, x, y, text, rgb) {
+  const { ctx } = P, [sx, sy] = P.pt(x, y), fs = P.fs - 1;
+  ctx.font = FONT(700, fs, 'IBM Plex Mono'); const w = ctx.measureText(text).width + 14, h = fs + 9;
+  const bx = Math.max(P.m, Math.min(P.w - P.m - w, sx - w / 2)), by = sy - h / 2;
+  ctx.fillStyle = `rgba(${rgb},.92)`; ctx.beginPath(); ctx.roundRect ? ctx.roundRect(bx, by, w, h, 4) : ctx.rect(bx, by, w, h); ctx.fill();
+  ctx.fillStyle = '#fff'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillText(text, bx + 7, sy + .5);
+  ctx.textBaseline = 'alphabetic';
+}
+function vline(P, x, rgb, dash) {
+  const { ctx } = P; ctx.save(); ctx.strokeStyle = `rgba(${rgb},.85)`; ctx.lineWidth = 2; ctx.setLineDash(dash);
+  ctx.beginPath(); ctx.moveTo(...P.pt(x, 0)); ctx.lineTo(...P.pt(x, 100)); ctx.stroke(); ctx.restore();
+}
+
 /* lanes per team: shares (3) shade each lane inside that team's attacking third; labels from its own view */
 function drawTeamLanes(P, side, shares, five = false) {
   const { ctx } = P, rgb = side === 0 ? PITCH.homeRGB : PITCH.awayRGB;
@@ -60,7 +83,7 @@ function drawTeamLanes(P, side, shares, five = false) {
     const [y0, y1] = side === 0 ? [edges[i], edges[i + 1]] : [100 - edges[i + 1], 100 - edges[i]];
     ctx.fillStyle = `rgba(${rgb},${.06 + .42 * shares[i] / max})`; ctx.fillRect(...P.rect(xa[0], y0, xa[1], y1));
     ctx.strokeStyle = `rgba(${rgb},.7)`; ctx.setLineDash([5, 4]); ctx.lineWidth = 1.2; ctx.strokeRect(...P.rect(xa[0], y0, xa[1], y1)); ctx.setLineDash([]);
-    label(P, names[i].toUpperCase(), side === 0 ? 92 : 8, (y0 + y1) / 2, { colour: `rgb(${rgb})`, size: P.fs - (five ? 2 : 0) });
+    label(P, `${names[i].toUpperCase()}  ${shares[i]}%`, side === 0 ? 90 : 10, (y0 + y1) / 2, { colour: `rgb(${rgb})`, size: P.fs - (five ? 2 : 0) });
   }
 }
 function drawThirds(P) {
@@ -96,8 +119,10 @@ function drawHeat(P, points, { radius = 0, rgbRamp = 'warm' } = {}) {
     o.fillStyle = g; o.fillRect(X - r, Y - r, 2 * r, 2 * r); }
   const img = o.getImageData(0, 0, off.width, off.height), d = img.data; let mx = 0;
   for (let i = 3; i < d.length; i += 4) if (d[i] > mx) mx = d[i];
-  const ramp = rgbRamp === 'blue' ? t => [31 + 60 * (1 - t), 78 + 120 * (1 - t), 156 + 60 * (1 - t)]
-    : rgbRamp === 'red' ? t => [192 + 40 * (1 - t), 57 + 140 * (1 - t), 43 + 140 * (1 - t)]
+  const lerp3 = (a, b, f) => a.map((v, i) => v + (b[i] - v) * f);
+  const teamRamp = rgb => { const c = rgb.split(',').map(Number); return t => lerp3([235, 232, 222], c, Math.min(1, .25 + t)); };
+  const ramp = rgbRamp === 'blue' ? teamRamp(PITCH.homeRGB) : rgbRamp === 'red' ? teamRamp(PITCH.awayRGB)
+    : PAL.cb ? t => t < .5 ? lerp3([68, 1, 84], [33, 145, 140], t * 2) : lerp3([33, 145, 140], [253, 231, 37], (t - .5) * 2)  // viridis-like
     : t => t < .5 ? [46 + 368 * t, 139 + 82 * t, 62 - 40 * t] : [230 - 76 * (t - .5), 180 - 246 * (t - .5), 42];
   for (let i = 0; i < d.length; i += 4) { const t = d[i + 3] / (mx || 1); if (t < .05) { d[i + 3] = 0; continue; }
     const c = ramp(t); d[i] = c[0]; d[i + 1] = c[1]; d[i + 2] = c[2]; d[i + 3] = Math.round(210 * Math.min(1, t * 1.35)); }
@@ -155,10 +180,10 @@ function drawBands(P, pct, compare) {
   const { ctx } = P, max = Math.max(...pct) || 1;
   pct.forEach((v, i) => {
     const [x, y, w, h] = P.rect(i * 100 / 6, 0, (i + 1) * 100 / 6, 100);
-    ctx.fillStyle = `rgba(46,139,62,${.12 + .62 * v / max})`; ctx.fillRect(x + 2, y + 2, w - 4, h - 4);
+    ctx.fillStyle = `rgba(${PAL.goodRGB},${.12 + .62 * v / max})`; ctx.fillRect(x + 2, y + 2, w - 4, h - 4);
     label(P, v + '%', (i + .5) * 100 / 6, P.vertical ? 50 : 82, { size: P.fs + 2, bg: true });
     if (compare) { const d = Math.round((v - compare[i]) * 10) / 10;
-      label(P, `${d > 0 ? '+' : ''}${d} v avg`, (i + .5) * 100 / 6, P.vertical ? 80 : 93, { size: P.fs - 2, weight: 600, colour: d > 0 ? '#2E8B3E' : d < 0 ? '#C0392B' : PITCH.ink }); }
+      label(P, `${d > 0 ? '+' : ''}${d} v avg`, (i + .5) * 100 / 6, P.vertical ? 80 : 93, { size: P.fs - 2, weight: 600, colour: d > 0 ? `rgb(${PAL.goodRGB})` : d < 0 ? `rgb(${PAL.badRGB})` : PITCH.ink }); }
   });
 }
 /* shares by lane as columns along the pitch (vertical views) */
